@@ -1,15 +1,11 @@
 package com.chan.utils;
 
-import com.alibaba.fastjson.JSON;
-import com.alibaba.fastjson.JSONObject;
 import com.google.gson.JsonObject;
 import lombok.extern.log4j.Log4j2;
 import okhttp3.*;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Component;
 
-import java.io.IOException;
 import java.io.UnsupportedEncodingException;
 import java.util.*;
 
@@ -19,14 +15,22 @@ import java.util.*;
  * @Description:
  */
 @Log4j2
-@Component
+//@Component
 public class ElasticSearchUtils {
 
+    private static String userName;
+
+    private static String password;
+
     //    @Value("${commodityEs.userName}")
-    private String userName;
+    public void setUserName(String userName) {
+        this.userName = userName;
+    }
 
     //    @Value("${commodityEs.password}")
-    private String password;
+    public void setPassword(String password) {
+        this.password = password;
+    }
 
     private static final OkHttpClient client = new OkHttpClient();
 
@@ -35,7 +39,7 @@ public class ElasticSearchUtils {
     /**
      * 校验用户名密码
      */
-    private Request auth(Request.Builder builder) {
+    private static Request auth(Request.Builder builder) {
         if (StringUtils.isNotBlank(userName)) {
             builder.header("Authorization", String.format("Basic %s", snEncode(String.format("%s:%s", userName, password))));
         }
@@ -60,115 +64,90 @@ public class ElasticSearchUtils {
     /**
      * ElasticSearch 通用请求
      *
-     * @param url
-     * @param contentText
+     * @param url     请求地址
+     * @param dsl     DSL语句
+     * @param isParse 是否解析返回值
      * @return
      */
-    public Response elasticSearchRequest(String url, String contentText) {
-        log.info("ElasticSearch------请求报文--- {}", "\n" + url + "\n" + contentText);
-        RequestBody requestBody = RequestBody.create(mediaType, contentText);
+    public static JsonObject elasticSearchRequest(String url, String dsl, boolean isParse) {
+        log.info("ElasticSearch---请求报文--- {} \n{}", url, dsl);
+        RequestBody requestBody = RequestBody.create(mediaType, dsl);
         Request.Builder builder = new Request.Builder()
                 .url(url)
                 .header("Content-type", "application/json; charset=utf-8")
-                .header("Content-Length", String.valueOf(contentText.length()))
+                .header("Content-Length", String.valueOf(dsl.length()))
                 .post(requestBody);
 
+        JsonObject result = null;
         Response response = null;
         try {
-            Request request = this.auth(builder);
+
+            Request request = auth(builder);
             response = client.newCall(request).execute();
-            response.close();
-            log.info("-------------ElasticSearch--请求返回------------\n{}", response);
+
+            if (isParse && response.isSuccessful()) result = ElasticSearchParse.parse(response);
+
         } catch (Exception e) {
-            response.close();
             log.error(e);
+        } finally {
+            response.close();
+            log.info("---ElasticSearch--请求返回---\n{}", response);
         }
-        return response;
-    }
-
-    public static Map parse(Response response) throws IOException {
-
-        String json = response.body().string();
-//        System.out.println(json);
-        Map map = JSON.parseObject(json, Map.class);
-        Map result = new HashMap();
-        List<Map> ll = new ArrayList<>();
-        for (Object o : map.keySet()) {
-            if ("hits".equals(o)) {
-                Map map1 = JSON.parseObject(map.get(o).toString(), Map.class);
-                Integer num = (Integer) map1.get("total");
-                result.put("total", num);
-                for (Object o1 : map1.keySet()) {
-                    if ("hits".equals(o1)) {
-                        List list = JSON.parseObject(map1.get(o1).toString(), List.class);
-//                        logger.info("List查询结果为：{}", list);
-                        for (Object o2 : list) {
-                            Map map2 = JSON.parseObject(o2.toString(), Map.class);
-                            for (Object o3 : map2.keySet()) {
-                                if ("_source".equals(o3)) {
-                                    ll.add((Map) map2.get(o3));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        result.put("list", ll);
         return result;
     }
 
-    public static void main(String[] args) throws IOException {
-        StringBuilder sb = new StringBuilder();
-        StringBuilder query = new StringBuilder()
-                .append("{\n" +
-                        "    \"query\":{\n" +
-                        "        \"bool\":{\n" +
-                        "            \"must\":[\n" +
-                        "                {\n" +
-                        "                    \"match\":{\n" +
-                        "                        \"last_name\":\"Smith\"\n" +
-                        "                    }\n" +
-                        "                }\n" +
-                        "            ],\n" +
-                        "            \"must_not\":[\n" +
-                        "                {\n" +
-                        "                    \"match\":{\n" +
-                        "                        \"first_name\":\"Jane\"\n" +
-                        "                    }\n" +
-                        "                }\n" +
-                        "            ]\n" +
-                        "        }\n" +
-                        "    },\n" +
-                        "    \"sort\":[\n" +
-                        "        {\n" +
-                        "            \"age\":{\n" +
-                        "                \"order\":\"asc\"\n" +
-                        "            }\n" +
-                        "        }\n" +
-                        "    ]\n" +
-                        "}");
 
-        String curl = sb.append("http://114.67.177.190:9200")
-                .append("/megacorp/employee/_search" + "\n").toString();
-        log.info("请求地址为：{}", curl.concat(query.toString()));
+    public static void main(String[] args) {
+        String dsl = "{\n" +
+                "    \"_source\":[\n" +
+                "        \"first_name\",\n" +
+                "        \"last_name\",\n" +
+                "        \"age\",\n" +
+                "        \"about\",\n" +
+                "        \"interests\"\n" +
+                "    ],\n" +
+                "    \"query\":{\n" +
+                "        \"bool\":{\n" +
+                "            \"must\":[\n" +
+                "                {\n" +
+                "                    \"match\":{\n" +
+                "                        \"last_name\":\"Smith\"\n" +
+                "                    }\n" +
+                "                }\n" +
+                "            ],\n" +
+                "            \"must_not\":[\n" +
+                "                {\n" +
+                "                    \"match\":{\n" +
+                "                        \"first_name\":\"Jane\"\n" +
+                "                    }\n" +
+                "                }\n" +
+                "            ]\n" +
+                "        }\n" +
+                "    },\n" +
+                "    \"sort\":[\n" +
+                "        {\n" +
+                "            \"age\":{\n" +
+                "                \"order\":\"asc\"\n" +
+                "            }\n" +
+                "        }\n" +
+                "    ],\n" +
+                "    \"from\":0,\n" +
+                "    \"size\":20,\n" +
+                "    \"highlight\":{\n" +
+                "        \"fields\":{\n" +
+                "            \"last_name\":{\n" +
+                "\n" +
+                "            }\n" +
+                "        }\n" +
+                "    }\n" +
+                "}";
 
-        RequestBody requestBody = RequestBody.create(mediaType, query.toString());
-        Request.Builder builder = new Request.Builder()
-                .url(curl)
-                .header("Content-type", "application/json; charset=utf-8")
-                .header("Authorization", String.format("Basic %s", snEncode(String.format("%s:%s", null, null))))
-                .header("Content-Length", String.valueOf(query.length()))
-                .post(requestBody);
+        String curl = "http://114.67.177.190:9200"
+                .concat("/megacorp/employee/_search");
 
-        Request request = new ElasticSearchUtils().auth(builder);
-        Response response = client.newCall(request).execute();
-        Map result = new HashMap();
-        if (response.isSuccessful()) {
-            result = parse(response);
-        }
+        JsonObject response = elasticSearchRequest(curl, dsl, true);
 
-        System.err.println(GsonUtils.GsonToBean(result.toString(), JsonObject.class));
+        System.err.println(response);
 
     }
 
